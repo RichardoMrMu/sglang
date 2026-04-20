@@ -4,6 +4,7 @@ import dataclasses
 import multiprocessing as mp
 import os
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
@@ -18,6 +19,7 @@ from sglang.srt.managers.schedule_batch import (
     MultimodalInputFormat,
     MultimodalProcessorOutput,
 )
+from sglang.srt.observability.trace import get_global_tracing_enabled
 from sglang.srt.server_args import get_global_server_args
 from sglang.srt.utils import (
     envs,
@@ -399,6 +401,8 @@ class BaseMultimodalProcessor(ABC):
         """
         process multimodal data with transformers AutoProcessor
         """
+        preprocessing_start_time = time.perf_counter()
+
         if images:
             kwargs["images"] = images
             if self.image_config:
@@ -464,6 +468,37 @@ class BaseMultimodalProcessor(ABC):
                         result[feature_name], torch.Tensor
                     ):
                         result[feature_name] = result[feature_name].to("cpu")
+
+        preprocessing_end_time = time.perf_counter()
+
+        if get_global_tracing_enabled():
+            mm_tracing_attrs = {
+                "preprocessing_time_ms": round(
+                    (preprocessing_end_time - preprocessing_start_time) * 1000, 2
+                ),
+            }
+            if images:
+                mm_tracing_attrs["modality"] = "image"
+                mm_tracing_attrs["image_count"] = len(images)
+                total_pixels = 0
+                image_sizes = []
+                for img in images:
+                    if hasattr(img, "size"):
+                        width, height = img.size
+                        total_pixels += width * height
+                        image_sizes.append(f"{width}x{height}")
+                if total_pixels > 0:
+                    mm_tracing_attrs["total_pixels"] = total_pixels
+                    mm_tracing_attrs["image_sizes"] = ",".join(image_sizes)
+            elif videos:
+                mm_tracing_attrs["modality"] = "video"
+                mm_tracing_attrs["video_count"] = len(videos)
+            elif audios:
+                mm_tracing_attrs["modality"] = "audio"
+                mm_tracing_attrs["audio_count"] = len(audios)
+            result._mm_tracing_start_time = preprocessing_start_time
+            result._mm_tracing_end_time = preprocessing_end_time
+            result._mm_tracing_attrs = mm_tracing_attrs
 
         return result
 

@@ -790,6 +790,20 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 token_type_ids = mm_inputs.token_type_ids
                 if not isinstance(token_type_ids, list):
                     token_type_ids = token_type_ids.flatten().tolist()
+            
+            # Record multimodal preprocessing tracing
+            from sglang.srt.observability.trace import get_global_tracing_enabled
+
+            if get_global_tracing_enabled() and mm_inputs:
+                mm_start = getattr(mm_inputs, "_mm_tracing_start_time", None)
+                mm_end = getattr(mm_inputs, "_mm_tracing_end_time", None)
+                mm_attrs = getattr(mm_inputs, "_mm_tracing_attrs", None)
+                if mm_start and mm_end and mm_attrs:
+                    request_state = self.rid_to_state.get(obj.rid)
+                    if request_state and hasattr(request_state, "time_stats"):
+                        request_state.time_stats.set_multimodal_preprocessing_start_time(ts=mm_start)
+                        request_state.time_stats.set_multimodal_preprocessing_end_time(ts=mm_end, attrs=mm_attrs)
+
             if (
                 envs.SGLANG_MM_PRECOMPUTE_HASH.get()
                 and mm_inputs

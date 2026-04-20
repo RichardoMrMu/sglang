@@ -205,6 +205,12 @@ class RequestStage:
         "spec_draft_extend",
         level=3,
     )
+    # multimodal
+    MULTIMODAL_PREPROCESSING = RequestStageConfig(
+        "multimodal_preprocessing",
+        level=2,
+    )
+
     # other
     ANONYMOUS = RequestStageConfig("")
 
@@ -393,6 +399,35 @@ class APIServerReqTimeStats(ReqTimeStatsBase):
     def set_response_sent_to_client_time(self, ts=None):
         ts = ts or time.perf_counter()
         self.response_sent_to_client_time = ts
+
+    def set_multimodal_preprocessing_start_time(self, ts=None):
+        ts = ts or time.perf_counter()
+        self.multimodal_preprocessing_start_time = ts
+
+        if self.trace_ctx.tracing_enable:
+            self.trace_ctx.trace_slice_start(
+                RequestStage.MULTIMODAL_PREPROCESSING.stage_name,
+                RequestStage.MULTIMODAL_PREPROCESSING.level,
+                convert_time_to_realtime_ns(ts),
+            )
+
+    def set_multimodal_preprocessing_end_time(self, ts=None, attrs=None):
+        ts = ts or time.perf_counter()
+        self.multimodal_preprocessing_end_time = ts
+
+        if self.trace_ctx.tracing_enable:
+            trace_attrs = {}
+            if attrs:
+                trace_attrs = {
+                    f"gen_ai.multimodal.{key}": str(value)
+                    for key, value in attrs.items()
+                }
+            self.trace_ctx.trace_slice_end(
+                RequestStage.MULTIMODAL_PREPROCESSING.stage_name,
+                RequestStage.MULTIMODAL_PREPROCESSING.level,
+                convert_time_to_realtime_ns(ts),
+                attrs=trace_attrs if trace_attrs else None,
+            )
 
     def get_interval(self):
         return time.perf_counter() - self.last_time
