@@ -54,6 +54,7 @@ from sglang.srt.mem_cache.radix_cache import (
 )
 from sglang.srt.mem_cache.utils import convert_to_bigram_key
 from sglang.srt.observability.metrics_collector import StorageMetricsCollector
+from sglang.srt.observability.trace import get_global_tracing_enabled
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.cache_init_params import CacheInitParams
@@ -878,6 +879,17 @@ class HiRadixCache(RadixCache):
                 self._evict_backuped(node)
 
         self.update_eviction_metrics(num_evicted, start_time)
+
+        if get_global_tracing_enabled() and num_evicted > 0:
+            evict_duration_ms = (time.perf_counter() - start_time) * 1000
+            logger.debug(
+                "hicache evict: evicted=%d requested=%d duration_ms=%.2f write_back_nodes=%d",
+                num_evicted,
+                num_tokens,
+                evict_duration_ms,
+                len(write_back_nodes),
+            )
+
         return EvictResult(num_tokens_evicted=num_evicted)
 
     def _evict_backuped(self, node: TreeNode):
@@ -998,11 +1010,18 @@ class HiRadixCache(RadixCache):
         self.evictable_size_ += len(device_indices)
         self.inc_lock_ref(last_hit_node)
 
+        load_back_duration = time.perf_counter() - start_time
         if self.metrics_collector is not None:
-            self.metrics_collector.observe_load_back_duration(
-                time.perf_counter() - start_time
-            )
+            self.metrics_collector.observe_load_back_duration(load_back_duration)
             self.metrics_collector.increment_load_back_num_tokens(len(device_indices))
+
+        if get_global_tracing_enabled():
+            logger.debug(
+                "hicache load_back: tokens=%d nodes=%d duration_ms=%.2f",
+                len(device_indices),
+                len(nodes_to_load),
+                load_back_duration * 1000,
+            )
 
         return device_indices
 
@@ -1235,6 +1254,17 @@ class HiRadixCache(RadixCache):
         while not last_host_node.backuped:
             last_host_node = last_host_node.parent
 
+        if get_global_tracing_enabled():
+            gpu_hit_tokens = len(value)
+            total_tokens = page_aligned_len
+            logger.debug(
+                "hicache match_prefix: gpu_hit=%d host_hit=%d miss=%d total=%d",
+                gpu_hit_tokens,
+                host_hit_length,
+                total_tokens - gpu_hit_tokens - host_hit_length,
+                total_tokens,
+            )
+
         return MatchResult(
             device_indices=value,
             last_device_node=last_node,
@@ -1291,6 +1321,13 @@ class HiRadixCache(RadixCache):
             operation,
         )
         self.cache_controller.prefetch_tokens_occupied += len(new_input_tokens)
+
+        if get_global_tracing_enabled():
+            logger.debug(
+                "hicache prefetch_from_storage: req_id=%s tokens=%d",
+                req_id,
+                len(new_input_tokens),
+            )
 
     def _insert_helper_host(
         self, node: TreeNode, key: RadixKey, host_value, hash_value
